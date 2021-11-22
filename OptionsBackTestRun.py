@@ -1,7 +1,6 @@
 import datetime
 import sys
 from time import perf_counter
-
 from SignalsBuilder import *
 from TradeObjects import *
 
@@ -29,10 +28,9 @@ def back_test_run():
     symbol_match = permno_to_symbol["HTSYMBOL"].tolist()
 
     # Debug code
-    permno = 14593
-
+    permno = None
     # e.g. datetime.date(1993, 3, 26)
-    debug_date = datetime.date(2018, 12, 21)
+    debug_date = None
 
     debug_mode = getattr(sys, 'gettrace', lambda: None)() is not None
     print("Debug Mode") if debug_mode else None
@@ -55,57 +53,80 @@ def back_test_run():
             symbol = "NA"
 
         stock_data = pd.read_csv("Stocks csv files/{}.csv".format(permno))
-        stock = list(map(lambda row: DayData(row[0], row[1], row[2], row[3], row[4], row[5]), stock_data.values))
+        stock = OrderedDict()
+        start_date = datetime.date(*list(map(int, stock_data.iloc[0]["Date"].split('-'))))
+        end_date = datetime.date(*list(map(int, stock_data.iloc[-1]["Date"].split('-'))))
+        date = start_date
+        # fills stock dictionary with all dates from start_date to end_date
+        while date <= end_date:
+            stock[date] = None
+            date += datetime.timedelta(days=1)
+        # fills stock dictionary with all days' data from the dataFrame
+        for row in stock_data.values:
+            date = datetime.date(*list(map(int, row[0].split('-'))))
+            stock[date] = DayData(row[1], row[2], row[3], row[4], row[5])
+        # Skipping to the first weekend
+        for date in stock:
+            if date.weekday() == 4:
+                start_date = date
+                break
 
         trading_state = TradingState.Hunting
         order = None
         option = None
 
-        for curr_day_index in range(40, len(stock)):
+        for curr_date in stock:
+            if (curr_date - start_date).days <= 14 * num_of_weeks:
+                continue
 
-            curr_day = stock[curr_day_index]
+            curr_day_data = stock[curr_date]
+
             # Debug code
-            if debug_mode and curr_day.date == debug_date:
+            if debug_mode and curr_date == debug_date:
                 print("stop")
             # Debug code
 
             # We bought the stock (an order has been executed):
             if trading_state == TradingState.InPortfolio:
+                if stock[curr_date] is None:
+                    continue
                 if option.type == "call":
-                    if curr_day.low <= option.stop_loss:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.open if curr_day.open < option.stop_loss else option.stop_loss, 1, order.bar_vol, order.bar_type)
+                    if curr_day_data.low <= option.stop_loss:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.open if curr_day_data.open < option.stop_loss else option.stop_loss, 1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
-                    elif curr_day.high >= option.target:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.open if curr_day.open > option.target else option.target, 1, order.bar_vol, order.bar_type)
+                    elif curr_day_data.high >= option.target:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.open if curr_day_data.open > option.target else option.target, 1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
-                    if option is not None and curr_day.date.weekday() >= 4:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.close, 1, order.bar_vol, order.bar_type)
+                    if option is not None and curr_date.weekday() >= 4:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.close, 1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
                 else:  # option is "put"
-                    if curr_day.high >= option.stop_loss:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.open if curr_day.open > option.stop_loss else option.stop_loss, -1, order.bar_vol, order.bar_type)
+                    if curr_day_data.high >= option.stop_loss:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.open if curr_day_data.open > option.stop_loss else option.stop_loss, -1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
-                    elif curr_day.low <= option.target:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.open if curr_day.open < option.target else option.target, -1, order.bar_vol, order.bar_type)
+                    elif curr_day_data.low <= option.target:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.open if curr_day_data.open < option.target else option.target, -1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
-                    if option is not None and curr_day.date.weekday() >= 4:
-                        add_trade(trades, permno, symbol, curr_day, option, curr_day.close, -1, order.bar_vol, order.bar_type)
+                    if option is not None and curr_date.weekday() >= 4:
+                        add_trade(trades, permno, symbol, curr_date, option, curr_day_data.close, -1, order.bar_vol, order.bar_type)
                         order, option = None, None
                         trading_state = TradingState.Hunting
 
             # We're waiting for an order to be executed:
             elif trading_state == TradingState.PendingOrder:
-                if (curr_day.date - order.date).days <= 4:
-                    if curr_day.open <= order.call < curr_day.high:
-                        option = Option(curr_day.date, "call", order.call, order.call + (order.call - order.call_stop_loss) * 2, order.call_stop_loss)
+                if stock[curr_date] is None:
+                    continue
+                if (curr_date - order.date).days <= 4:
+                    if curr_day_data.open <= order.call < curr_day_data.high:
+                        option = Option(curr_date, "call", order.call, order.call + (order.call - order.call_stop_loss) * 2, order.call_stop_loss)
                         trading_state = TradingState.InPortfolio
-                    elif curr_day.open >= order.put > curr_day.low:
-                        option = Option(curr_day.date, "put", order.put, order.put - (order.put_stop_loss - order.put) * 2, order.put_stop_loss)
+                    elif curr_day_data.open >= order.put > curr_day_data.low:
+                        option = Option(curr_date, "put", order.put, order.put - (order.put_stop_loss - order.put) * 2, order.put_stop_loss)
                         trading_state = TradingState.InPortfolio
                 else:
                     trading_state = TradingState.Hunting
@@ -113,19 +134,23 @@ def back_test_run():
 
             # We're hunting for the right conditions:
             if trading_state == TradingState.Hunting:
-                # yearly_vol = [dd.volume for dd in stock[max(curr_day_index - 253, 0):curr_day_index + 1]]
-                # if sum(yearly_vol) / len(yearly_vol) < 1000000:
-                #     continue
-                if curr_day.date.weekday() == 4:  # Check if current date is friday
-                    curr_bar = get_weeks_bar(stock, curr_day_index, num_of_weeks)
-                    prev_bar = get_weeks_bar(stock, curr_day_index - 5 * num_of_weeks, num_of_weeks)
+                # TODO: Average volume
+                if curr_date.weekday() == 4:
+                    curr_friday = curr_date
+                    curr_monday = curr_friday - datetime.timedelta(days=4 + (7 * (num_of_weeks - 1)))
+                    prev_friday = curr_monday - datetime.timedelta(days=3)
+                    prev_monday = prev_friday - datetime.timedelta(days=4 + (7 * (num_of_weeks - 1)))
+
+                    curr_bar = get_bar(stock, curr_monday, curr_friday, permno, num_of_weeks)
+                    prev_bar = get_bar(stock, prev_monday, prev_friday, permno, num_of_weeks)
                     if curr_bar is None or prev_bar is None:
                         continue
+
                     inside_bar, outside_bar = is_inside_bar(curr_bar, prev_bar), is_outside_bar(curr_bar, prev_bar)
                     if inside_bar or outside_bar:
                         fibo_call = curr_bar.high - (curr_bar.high - curr_bar.low) * 0.618
                         fibo_put = curr_bar.low + (curr_bar.high - curr_bar.low) * 0.618
-                        order = Order(curr_day.date, curr_bar.high, curr_bar.low, fibo_call, fibo_put, curr_bar.volume, "IB" if inside_bar else "OB")
+                        order = Order(curr_date, curr_bar.high, curr_bar.low, fibo_call, fibo_put, curr_bar.volume, "IB" if inside_bar else "OB")
                         trading_state = TradingState.PendingOrder
 
         counter += 1
@@ -136,18 +161,18 @@ def back_test_run():
     trades_df = pd.DataFrame(trades, columns=list(trades.keys()))
     trades_df = trades_df.sort_values(['Buy_Date', 'Permno']).reset_index(
         drop=True)  # sorts the trades by buy date
-    trades_df.to_csv('Options Trades.csv', index=False, header=True)
-    print("\nDone in {:.0f} seconds! See Trades.csv".format(perf_counter() - counter_start))
+    trades_df.to_csv(f'Options Trades {num_of_weeks} weeks.csv', index=False, header=True)
+    print("\nDone in {:.0f} seconds! Options Trades {} weeks.csv".format(perf_counter() - counter_start, num_of_weeks))
 
     print_stats(trades_df)
 
 
-def add_trade(trades, permno, symbol, curr_day, option, sell_price, sign, bar_vol, bar_type):
+def add_trade(trades, permno, symbol, curr_date, option, sell_price, sign, bar_vol, bar_type):
     trades['Permno'].append(permno)
     trades['Symbol'].append(symbol)
     trades['Buy_Date'].append(option.buy_date)
     trades['Buy_Price'].append(option.buy_price)
-    trades['Sell_Date'].append(curr_day.date)
+    trades['Sell_Date'].append(curr_date)
     trades['Sell_Price'].append(sell_price)
     trade_return = sign * (sell_price - option.buy_price) / option.buy_price
     trades['Return_Ratio'].append(str(round(100 * trade_return, 2)) + '%')

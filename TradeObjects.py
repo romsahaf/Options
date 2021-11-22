@@ -4,8 +4,7 @@ import enum
 
 
 class DayData:
-    def __init__(self, date, openn, close, high, low, volume):
-        self.date: datetime = datetime.date(*list(map(int, date.split('-'))))
+    def __init__(self, openn, close, high, low, volume):
         self.open: float = openn
         self.close: float = close
         self.high: float = high

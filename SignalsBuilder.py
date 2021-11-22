@@ -4,6 +4,7 @@ import datetime
 from TradeObjects import *
 from typing import List
 import statistics as st
+from collections import OrderedDict
 
 
 def is_inside_bar(curr_bar: Bar, prev_bar: Bar):
@@ -15,27 +16,27 @@ def is_outside_bar(curr_bar: Bar, prev_bar: Bar):
     return curr_bar.high > prev_bar.high and curr_bar.low < prev_bar.low
 
 
-def get_weeks(stock: List[DayData], curr_day_index, num_of_weeks):
-    monday_index = curr_day_index - (4 + 5 * (num_of_weeks - 1))
-    monday = stock[monday_index]
-    if monday.date.weekday() != 0:
+def get_bar(stock: OrderedDict, start_date: datetime, end_date: datetime, permno, num_of_weeks):
+    data = get_data_between_dates(stock, start_date, end_date)
+    if len(data) < 3 * num_of_weeks:
         return None
-    return stock[monday_index: curr_day_index + 1]
-
-
-def get_weeks_bar(stock: List[DayData], curr_day_index, num_of_weeks):
-    # Get current and previous weeks days as lists
-    weeks = get_weeks(stock, curr_day_index, num_of_weeks)
-    if weeks is None:
-        return None
-
-    bar_start_date = weeks[0].date
-    first_open = weeks[0].open
-    last_close = weeks[-1].close
-    highest_high = max(map(lambda d: d.high, weeks))
-    lowest_low = min(map(lambda d: d.low, weeks))
-    average_volume = sum(map(lambda d: d.volume, weeks)) / len(weeks)
+    bar_start_date = start_date
+    first_open = data[0].open
+    last_close = data[-1].close
+    highest_high = max(map(lambda d: d.high, data))
+    lowest_low = min(map(lambda d: d.low, data))
+    average_volume = sum(map(lambda d: d.volume, data)) / len(data)
     return Bar(bar_start_date, first_open, last_close, highest_high, lowest_low, average_volume)
+
+
+def get_data_between_dates(stock, start_date: datetime, end_date: datetime) -> List[DayData]:
+    data = []
+    date = start_date
+    while date <= end_date:
+        if stock[date] is not None and 0 <= date.weekday() <= 4:
+            data.append(stock[date])
+        date += datetime.timedelta(days=1)
+    return data
 
 
 def print_stats(trades_df):
